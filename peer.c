@@ -21,6 +21,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <sys/stat. h>
 
 /******************************************************************************
 * Module Preprocessor Macros
@@ -70,15 +71,119 @@ void RequestOnlineContent(int Socket)
     memset(&resp, 0, sizeof(resp));
     msg.type = ONLINE;
 
-    write(Socket, &msg, PACKETSIZE);
-    read(Socket, &resp, PACKETSIZE);
+    write(Socket, &msg, sizeof(msg));
+    read(Socket, &resp, sizeof(resp));
 
     printf("Content available: \n");
     printf("%s\n", resp.data);
 }
 
 /******************************************************************************
+* Initialize TCP Connection and returns tcp socket and server response
+*******************************************************************************/
+int InitializeTCPServer(int UdpSocket, char* PeerName, char* Filename, struct PDU Response)
+{
+    // Make tcp connection
+	int 	tcp_socket, alen;
+	struct	sockaddr_in server;
+	struct 	PDU msg;
+	char 	tcpAddr[15], tcpPort[6], send_data[100];
+
+    if ((tcp_socket = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+    fprintf(stderr, "Can't create a socket\n");
+    exit(1);
+	}
+
+    alen = sizeof(struct sockaddr_in);
+	getsockname(tcp_socket, (struct sockaddr*)&server, &alen);
+
+    sprintf(tcpAddr, "%d", server.sin_addr.s_addr);
+    sprintf(tcpPort, "%d", server.sin_port);
+
+    memset(&msg, 0, sizeof(msg));
+
+    msg.type = REGISTER;
+
+    char data[BUFFLEN] = {0};
+    strcpy(data, PeerName);
+    strcat(data, ";");
+    strcat(data, Filename);
+    strcat(data, ";");
+    strcat(data, tcpAddr);
+    strcat(data, ";");
+    strcat(data, tcpPort);
+    strcpy(msg.data, data);
+
+    write(UdpSocket, &msg, sizeof(msg));
+    read(UdpSocket, &Response, sizeof(Response));
+
+    return tcp_socket;
+}
+
+/******************************************************************************
 * Register new content
+*******************************************************************************/
+void RegisterContent(int Socket, char* PeerName)
+{
+    struct PDU msg, resp;
+    memset(&resp, 0, sizeof(resp));
+
+    printf("File name to register: ");
+
+    char Filename[25] = {0};
+    
+    int outLen = 0;
+    outLen = read(0, Filename, sizeof(Filename));
+    input[outLen-1] = 0;
+
+    struct stat info;
+    if(stat(Filename, &info) != 0)
+    {
+        printf("Unable to find file. \n");
+        return;
+    }
+
+    int tcpSocket = InitializeTCPServer(Socket, PeerName, Filename, &resp);
+
+    if(resp.type == (char)ERR)
+    {
+        printf("Can't register data. \n");
+    }
+    else if(resp.type == (char)ACK)
+    {
+       memset(&resp, 0, sizeof(resp));
+       memset(&msg, 0, sizeof(msg));
+
+       listen(tcpSocket, 5);
+
+       struct sockaddr_in client;
+       int sd;
+       switch(fork())
+       {
+        case 0:
+            sd = accept(tcpSocket, (struct sockaddr *)&client, sizeof(client));
+            read(sd, resp, sizeof(resp));
+            if(resp.type == (char)DOWNLOAD)
+            {
+                FILE *file;
+                file = fopen(Filename, "rb");
+                msg.type = (char)DATA;
+                while(fgets(msg.data, BUFFLEN, file)>0){
+                    write(sd, &msg, sizeof(msg));
+                }
+                fclose(file);
+                close(sd);
+            }
+            break;
+        case -1:
+            fprintf(stderr, "Unable to create child process.\n");
+            break;
+       }
+    }
+}
+
+/******************************************************************************
+* Download Content
 *******************************************************************************/
 
 /******************************************************************************
@@ -148,13 +253,13 @@ void main ( int argc, char **argv )
         switch((int) input[0])
         {
             case REGISTER:
-
+                RegisterContent(s, peerName);
                 break;
             case ONLINE:
                 RequestOnlineContent(s);
                 break;
             case DOWNLOAD:
-
+                
                 break;
             case SEARCH:
 
