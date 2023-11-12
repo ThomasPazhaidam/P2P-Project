@@ -40,7 +40,7 @@ struct PDU {
 *******************************************************************************/
 enum MsgType {
     REGISTER = 114, DOWNLOAD = 100, SEARCH = 115, DEREGISTER = 116, DATA = 99,
-    ONLINE = 111, ACK = 97, ERR = 101
+    ONLINE = 111, ACK = 97, ERR = 101, QUIT = 113
 };
 /******************************************************************************
 * Function Prototypes
@@ -79,9 +79,9 @@ void RequestOnlineContent(int Socket)
 }
 
 /******************************************************************************
-* Initialize TCP Connection and returns tcp socket and server response
+* Initialize TCP Connection and returns tcp server socket and server response
 *******************************************************************************/
-int InitializeTCPServer(int UdpSocket, char* PeerName, char* Filename, struct PDU Response)
+int InitializeTCPUpload(int UdpSocket, char* PeerName, char* Filename, struct PDU *Response)
 {
     // Make tcp connection
 	int 	tcp_socket, alen;
@@ -115,7 +115,7 @@ int InitializeTCPServer(int UdpSocket, char* PeerName, char* Filename, struct PD
     strcpy(msg.data, data);
 
     write(UdpSocket, &msg, sizeof(msg));
-    read(UdpSocket, &Response, sizeof(Response));
+    read(UdpSocket, Response, sizeof(Response));
 
     return tcp_socket;
 }
@@ -126,7 +126,6 @@ int InitializeTCPServer(int UdpSocket, char* PeerName, char* Filename, struct PD
 void RegisterContent(int Socket, char* PeerName)
 {
     struct PDU msg, resp;
-    memset(&resp, 0, sizeof(resp));
 
     printf("File name to register: ");
 
@@ -143,7 +142,7 @@ void RegisterContent(int Socket, char* PeerName)
         return;
     }
 
-    int tcpSocket = InitializeTCPServer(Socket, PeerName, Filename, &resp);
+    int tcpSocket = InitializeTCPUpload(Socket, PeerName, Filename, &resp);
 
     if(resp.type == (char)ERR)
     {
@@ -183,9 +182,200 @@ void RegisterContent(int Socket, char* PeerName)
 }
 
 /******************************************************************************
+* Initialize TCP Connection and returns tcp client socket
+*******************************************************************************/
+int InitializeTCPDownload(char* Port)
+{
+    // Make tcp connection
+	int 	tcp_socket;
+	struct	sockaddr_in server;
+    struct hostent *host;
+    char *serverHost = "0";
+
+    if ((tcp_socket = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+    fprintf(stderr, "Can't create a socket\n");
+    exit(1);
+	}
+    
+    bzero(&server, 0, sizeof(server));
+ 	server.sin_family = AF_INET; 
+	server.sin_port = htons(atoi(Port)); 
+
+ 	if (host = gethostbyname(serverHost)){
+		bcopy(host->h_addr, (char *)&server.sin_addr, host->h_length);
+	} 
+    else if (inet_aton(serverHost, (struct in_addr *) &server.sin_addr)){
+		fprintf(stderr, "Can't get server's address\n");
+	} 
+
+    if (connect(tcp_socket, (struct sockaddr *)&server, sizeof(server)) == -1){
+		fprintf(stderr, "cant't connect to server: %s\n", host->h_name);
+	}
+
+    return tcp_socket;
+}
+
+/******************************************************************************
 * Download Content
 *******************************************************************************/
+void DownloadContent(int Socket, char *SelfPeerName) 
+{
+   printf("Enter name of content to download: \n");
+   int outLen = 0;
+   char Filename[50] = {0};
+   outLen = read(0, Filename, sizeof(Filename));
+   Filename[outLen-1] = 0;
+   char peerName[50] = {0};
 
+   printf("Enter name of peer to download from: \n");
+   outLen = read(0, peerName, sizeof(peerName));
+   peerName[outLen-1]=0;
+
+   struct PDU msg;
+   memset(&msg, 0, PACKETSIZE);
+   msg.type = (char) SEARCH;
+   strcpy(msg.data, peerName);
+   strcat(msg.data, ";");
+   strcat(msg.data, Filename);
+
+   write(Socket, &msg, sizeof(msg));
+
+   struct PDU resp;
+   read(Socket, &resp, sizeof(resp));
+
+   char temp[BUFFLEN] = {0};
+   strcpy(temp, resp.data);
+
+   char *contentName = strtok(temp, ";");
+   char *peerName = strtok(NULL, ";");
+   char *addr = strtok(NULL, ";");
+   char *port = strtok(NULL, ";");
+
+   int tcpSocket = InitializeTCPDownload(port);
+
+   memset(&msg, 0, PACKETSIZE);
+   memset(&resp, 0, PACKETSIZE);
+
+   msg.type = (char) DOWNLOAD;
+   strcpy(msg.data, SelfPeerName);
+   strcat(msg.data, ";");
+   strcat(msg.data, contentName);
+
+   write(tcpSocket, &msg, sizeof(msg));
+
+   FILE *file = 0;
+   file = fopen(contentName, "wb");
+
+   int contentExists = 0;
+   while((outLen = read(tcpSocket, &resp, sizeof(resp)))>0){
+    if(resp.data == (char) DATA)
+    {
+        fprintf(file, "%s", resp.data);
+        contentExists = 1;
+    }
+    else if(resp.data == (char) ERR)
+    {
+        printf("Error downloading file. \n");
+    }
+   }
+   fclose(file);
+
+   if(contentExists)
+   {
+        RegisterContent(Socket, SelfPeerName);
+   }
+}
+
+/******************************************************************************
+* Search for content
+*******************************************************************************/
+void SearchContent(int Socket, char *SelfPeerName)
+{
+    printf("Item to search for: \n");
+    char content[50] = {0};
+    int outLen = read(0, content, sizeof(content));
+    content[outLen-1]=0;
+
+    struct PDU msg;
+    memset(&msg, 0, sizeof(msg));
+
+    msg.type = (int) SEARCH;
+    strcpy(msg.data, SelfPeerName);
+    strcat(msg.data, ";");
+    strcat(msg.data, content);
+
+    write(Socket, &msg, sizeof(msg));
+
+    struct PDU resp;
+    read(Socket, &resp, sizeof(msg));
+
+    char *tok = strtok(resp.data, ";");
+    printf("Content Name: %s\n", tok);
+    tok = strtok(NULL, ";");
+    printf("Peer Name: %s\n", tok);
+    tok = strtok(NULL, ";");
+    printf("Address: %s\n", tok);
+    tok = strtok(NULL, ";");
+    printf("Port: %s\n", tok);
+}
+
+/******************************************************************************
+* Deregister Content
+*******************************************************************************/
+void DeregisterContent(int Socket, char *SelfPeerName)
+{
+    printf("Item to deregister: \n");
+    char content[50] = {0};
+    int outLen = read(0, content, sizeof(content));
+    content[outLen-1]=0;
+
+    struct PDU msg;
+    memset(&msg, 0, sizeof(msg));
+
+    msg.type = (int) DEREGISTER;
+    strcpy(msg.data, SelfPeerName);
+    strcat(msg.data, ";");
+    strcat(msg.data, content);
+
+    write(Socket, &msg, sizeof(msg));
+
+    struct PDU resp;
+    read(Socket, &resp, sizeof(msg));
+
+    if(resp.type == (char) ACK)
+    {
+        printf("Content deregistered. \n");
+    }
+    else if(resp.type == (char) ERR)
+    {
+        printf("Unable to deregister content. \n");
+    }
+}
+
+/******************************************************************************
+* Quit Application
+*******************************************************************************/
+int Quit(int Socket, char *SelfPeerName)
+{
+    struct PDU msg;
+    memset(&msg, 0, size(msg));
+    msg.type = (char) QUIT;
+    strcpy(msg.data, SelfPeerName);
+    write(Socket, &msg, sizeof(msg));
+
+    struct PDU resp;
+    memset(&resp, 0, size(resp));   
+    read(s, &resp, sizeof(resp));
+
+    if(resp.type == (char)QUIT)
+    {
+        return 1;
+    }
+    else
+    {
+        return 0;
+    }
+}
 /******************************************************************************
 * main
 *******************************************************************************/
@@ -259,17 +449,19 @@ void main ( int argc, char **argv )
                 RequestOnlineContent(s);
                 break;
             case DOWNLOAD:
-                
+                DownloadContent(s, peerName);
                 break;
             case SEARCH:
-
+                SearchContent(s, peerName);
                 break;
             case DEREGISTER:
-
+                DeregisterContent(s, peerName);
                 break;
             case 113:
-
-                break;
+                if(Quit(s, peerName))
+                {
+                    break;
+                }     
         }
     }
     close(s);
