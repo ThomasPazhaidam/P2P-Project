@@ -21,7 +21,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <sys/stat. h>
+#include <sys/stat.h>
 
 /******************************************************************************
 * Module Preprocessor Macros
@@ -57,7 +57,7 @@ void GetPeerName(char *PeerName)
     int outLen = 0;
     memset(&PeerName, 0, sizeof(PeerName));
     printf("Specify peer name (max 10 characters): \n");
-    outLen = read(0, PeerName, sizeof(peerName));
+    outLen = read(0, PeerName, sizeof(PeerName));
     PeerName[outLen-1] = 0;
 }
 
@@ -133,7 +133,7 @@ void RegisterContent(int Socket, char* PeerName)
     
     int outLen = 0;
     outLen = read(0, Filename, sizeof(Filename));
-    input[outLen-1] = 0;
+    Filename[outLen-1] = 0;
 
     struct stat info;
     if(stat(Filename, &info) != 0)
@@ -161,7 +161,7 @@ void RegisterContent(int Socket, char* PeerName)
        {
         case 0:
             sd = accept(tcpSocket, (struct sockaddr *)&client, sizeof(client));
-            read(sd, resp, sizeof(resp));
+            read(sd, &resp, sizeof(resp));
             if(resp.type == (char)DOWNLOAD)
             {
                 FILE *file;
@@ -365,7 +365,7 @@ int Quit(int Socket, char *SelfPeerName)
 
     struct PDU resp;
     memset(&resp, 0, size(resp));   
-    read(s, &resp, sizeof(resp));
+    read(Socket, &resp, sizeof(resp));
 
     if(resp.type == (char)QUIT)
     {
